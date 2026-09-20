@@ -1,0 +1,2 @@
+﻿C:\Users\prasa\Downloads\pharmacysahana\pharmacysahana\project\server\services\verificationEngine.js:6: //   ORANGE - Authentic but flagged: >3 scans, same scanner repeating, or near-expiry
+C:\Users\prasa\Downloads\pharmacysahana\pharmacysahana\project\server\services\verificationEngine.js:104: reasons.push('MULTIPLE_DIFFERENT_SCANNERS');
