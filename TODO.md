@@ -12,6 +12,6 @@
 - [x] Add "Scan QR" menu item to transport role in Sidebar.tsx
 
 ## Build ✅
-- [x] Typecheck compiles (only pre-existing unrelated error in src/lib/db.ts:319)
+- [x] Typecheck compiles cleanly (no errors)
 - [x] Rebuilt dist/ - sw.js regenerated successfully (58 precache entries)
 - [x] Backend healthy on port 41837

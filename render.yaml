@@ -1,0 +1,47 @@
+# Render blueprint for the PharmaChain backend.
+# Deploy via Render Dashboard → New → Blueprint, or push this file and select it.
+# Fill in the sync:false env vars in the Render dashboard (never commit values).
+services:
+  - type: web
+    name: pharmachain-api
+    runtime: node
+    plan: free # upgrade for production
+    region: oregon # pick the region closest to your Atlas cluster
+    branch: main
+    buildCommand: npm ci
+    startCommand: node server/index.cjs
+    healthCheckPath: /api/health
+    disk:
+      name: pharmachain-files
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: PHARMACHAIN_FILE_STORAGE_DIR
+        value: /var/data/files
+      # --- Set these in the Render dashboard (secret / environment-specific) ---
+      - key: PHARMACHAIN_MONGODB_URI
+        sync: false # MongoDB Atlas SRV string
+      - key: JWT_SECRET
+        sync: false # long random string; REQUIRED in production
+      - key: HF_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GPT5_API_KEY
+        sync: false
+      - key: BLOCKCHAIN_RPC_URL
+        sync: false
+      - key: BLOCKCHAIN_CONTRACT_ADDRESS
+        sync: false
+      - key: BLOCKCHAIN_PRIVATE_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false # e.g. https://your-app.vercel.app

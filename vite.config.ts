@@ -73,6 +73,11 @@ workbox: {
       },
     }),
   ],
+  define: {
+    // Build stamp surfaced in the console so a stale-cached client is easy
+    // to identify when debugging "works here but not there" reports.
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -82,18 +87,19 @@ workbox: {
     exclude: ['lucide-react'],
   },
   server: {
-    // Proxy API calls to the Express backend (MongoDB) on :41837
+    // Pin the dev server to an unused port so it never collides with another
+    // Vite instance (5173-5175 are often occupied). Override with
+    // `vite --port <n>`; PHARMACHAIN_API_PORT keeps the proxy in lockstep if
+    // scripts/dev-server-unused.mjs could not take the default backend port.
+    port: 5176,
+    strictPort: true,
+    // Proxy API calls to the Express backend (MongoDB) on :41838. The SPA
+    // pages live at /verify, /track and /transport (client-side routes for
+    // the QR 1 / QR 2 deep links) — they are NOT proxied, so full-page loads
+    // reach the React app, not the backend.
     proxy: {
       '/api': {
-        target: 'http://localhost:41837',
-        changeOrigin: true,
-      },
-      '/verify': {
-        target: 'http://localhost:41837',
-        changeOrigin: true,
-      },
-      '/track': {
-        target: 'http://localhost:41837',
+        target: `http://localhost:${process.env.PHARMACHAIN_API_PORT || 41838}`,
         changeOrigin: true,
       },
     },
