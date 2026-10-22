@@ -11,6 +11,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const { IS_DEV, JSON_LIMIT, CORS_ORIGINS } = require('./config/env.cjs');
 const db = require('./db/connection.cjs');
 const errorHandler = require('./middleware/errorHandler.cjs');
+const trustedOrigin = require('./middleware/trustedOrigin.cjs');
 
 const authRoutes = require('./routes/auth.cjs');
 const prescriptionRoutes = require('./routes/prescriptions.cjs');
@@ -30,11 +31,13 @@ app.use(cors({
     }
     return callback(null, false);
   },
+  credentials: true,
 }));
 app.set('trust proxy', IS_DEV ? false : 1);
 app.use(express.json({ limit: JSON_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: JSON_LIMIT }));
 app.use(rateLimit({ windowMs: 60_000, max: 300 }));
+app.use('/api', trustedOrigin);
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ ok: true, uptime: process.uptime(), dbMode: db.getMode() }));

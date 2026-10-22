@@ -29,10 +29,17 @@ if (NODE_ENV === 'production' && CORS_ORIGINS.length === 0) {
   throw new Error('CORS_ORIGINS must list the trusted frontend origins in production');
 }
 const FILE_KEY = process.env.PHARMACHAIN_FILE_KEY || '';
+const FILE_STORAGE_BACKEND = (process.env.PHARMACHAIN_FILE_STORAGE_BACKEND || 'local').toLowerCase();
 const validFileKey = /^[0-9a-fA-F]{64}$/.test(FILE_KEY)
   || (/^[A-Za-z0-9+/]{43}=$/.test(FILE_KEY) && Buffer.from(FILE_KEY, 'base64').length === 32);
 if (NODE_ENV === 'production' && !validFileKey) {
   throw new Error('PHARMACHAIN_FILE_KEY must be a 32-byte hex or base64 key in production');
+}
+if (!['local', 'gridfs'].includes(FILE_STORAGE_BACKEND)) {
+  throw new Error('PHARMACHAIN_FILE_STORAGE_BACKEND must be either "local" or "gridfs"');
+}
+if (NODE_ENV === 'production' && FILE_STORAGE_BACKEND !== 'gridfs') {
+  throw new Error('PHARMACHAIN_FILE_STORAGE_BACKEND must be "gridfs" in production');
 }
 const JSON_LIMIT = process.env.JSON_BODY_LIMIT || '15mb';
 // Feature flag: persistence via MongoDB is only attempted when a URI is present.
@@ -95,6 +102,7 @@ const BLOCKCHAIN_EXPLORER_URL = process.env.BLOCKCHAIN_EXPLORER_URL || 'https://
 module.exports = {
   NODE_ENV, IS_DEV, PORT, JWT_SECRET, JWT_EXPIRES_IN,
   MONGODB_URI, CORS_ORIGINS, JSON_LIMIT,
+  FILE_STORAGE_BACKEND,
   OPENAI_API_KEY, AI_PROVIDER, AI_BASE_URL, AI_API_KEY, AI_MODEL,
   OPENROUTER_API_KEY, OPENROUTER_MODEL,
   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_AI_MODEL,

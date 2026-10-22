@@ -11,6 +11,7 @@ const jwt = require('jsonwebtoken');
 const z = require('zod');
 const { JWT_SECRET } = require('../config/env.cjs');
 const { auth, requireRole } = require('../middleware/auth.cjs');
+const { sessionToken } = require('../services/sessionCookie.cjs');
 const validate = require('../middleware/validate.cjs');
 const { createRepository } = require('../db/repositories/repositoryFactory.cjs');
 const models = require('../db/models/index.cjs');
@@ -23,11 +24,11 @@ const userRepo = createRepository({ name: 'users', model: models.User, prefix: '
 // Optional auth: identify the caller if a valid Bearer token is present, but
 // never reject — public scan/history reads stay open (minimal, safe fields).
 async function optionalAuth(req, _res, next) {
-  const h = req.headers.authorization || '';
-  if (h.startsWith('Bearer ')) {
+  const token = sessionToken(req);
+  if (token) {
     let payload;
     try {
-      payload = jwt.verify(h.slice(7), JWT_SECRET, { algorithms: ['HS256'] });
+      payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     } catch {
       return next();
     }

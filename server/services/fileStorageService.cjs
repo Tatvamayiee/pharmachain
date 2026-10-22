@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Server-side prescription image storage. Files are persisted server-side and
 // encrypted at rest with AES-256-GCM (per-file random IV + auth tag), under
-// <dataDir>/prescription-files/<org>/<uuid>.bin. The key comes from
+// <dataDir>/prescription-files/<org>/<uuid>.bin or in MongoDB GridFS. The key comes from
 // PHARMACHAIN_FILE_KEY (hex/base64, 32 bytes) with a dev-only fallback — and a
 // loud warning when the fallback is used. The key is never logged or sent to
 // the client. MIME + size validation is shared with the analyzer path.
@@ -9,11 +9,16 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { FILE_STORAGE_DIR } = require('../config/env.cjs');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
+const mongoose = require('mongoose');
+const { FILE_STORAGE_BACKEND, FILE_STORAGE_DIR } = require('../config/env.cjs');
 
 const DATA_ROOT = path.isAbsolute(FILE_STORAGE_DIR)
   ? FILE_STORAGE_DIR
   : path.join(__dirname, '..', '..', FILE_STORAGE_DIR);
+const GRIDFS_BUCKET_NAME = 'prescriptionFiles';
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 function storageKey() {
   const raw = process.env.PHARMACHAIN_FILE_KEY || '';
@@ -37,16 +42,35 @@ function storageKey() {
 }
 
 function orgDir(org) {
-  const safeOrg = String(org || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'unknown';
+  const safeOrg = safeOrganization(org);
   const dir = path.join(DATA_ROOT, 'prescription-files', safeOrg);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
+function safeOrganization(org) {
+  return String(org || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'unknown';
+}
+
+function organizationHash(organizationId) {
+  return crypto.createHash('sha256')
+    .update(String(organizationId || 'unknown'))
+    .digest('hex');
+}
+
+function gridFsBucket() {
+  const db = mongoose.connection.db;
+  if (mongoose.connection.readyState !== 1 || !db) {
+    const err = new Error('MongoDB must be connected to use GridFS prescription storage.');
+    err.status = 503;
+    throw err;
+  }
+  return new mongoose.mongo.GridFSBucket(db, { bucketName: GRIDFS_BUCKET_NAME });
+}
+
 function validateImageInput({ mimetype, size, buffer }) {
   const ALLOWED = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'application/pdf']);
   const contentType = String(mimetype || '').toLowerCase();
-  const MAX_BYTES = 10 * 1024 * 1024;
   if (!ALLOWED.has(contentType)) {
     const err = new Error(`Unsupported file type "${mimetype || 'unknown'}". Allowed: PNG, JPG, WEBP, PDF.`);
     err.status = 422;
@@ -62,7 +86,7 @@ function validateImageInput({ mimetype, size, buffer }) {
     err.status = 422;
     throw err;
   }
-  if (size > MAX_BYTES) {
+  if (size > MAX_FILE_BYTES) {
     const err = new Error('File exceeds the 10 MB limit.');
     err.status = 422;
     throw err;
@@ -97,9 +121,21 @@ async function saveFile({ buffer, mimetype, originalName, organizationId }) {
   const tag = cipher.getAuthTag();
 
   const id = crypto.randomUUID();
-  const dir = orgDir(organizationId);
-  const filePath = path.join(dir, `${id}.bin`);
-  fs.writeFileSync(filePath, Buffer.concat([iv, tag, ciphertext]));
+  const encrypted = Buffer.concat([iv, tag, ciphertext]);
+  if (FILE_STORAGE_BACKEND === 'gridfs') {
+    const bucket = gridFsBucket();
+    const upload = bucket.openUploadStreamWithId(id, `${id}.bin`, {
+      metadata: {
+        organizationHash: organizationHash(organizationId),
+        encrypted: true,
+        originalSize: buffer.length,
+      },
+    });
+    await pipeline(Readable.from([encrypted]), upload);
+  } else {
+    const dir = orgDir(organizationId);
+    fs.writeFileSync(path.join(dir, `${id}.bin`), encrypted);
+  }
 
   return {
     fileId: id,
@@ -121,14 +157,50 @@ async function readFile({ organizationId, fileId }) {
     err.status = 400;
     throw err;
   }
-  const dir = orgDir(organizationId);
-  const filePath = path.join(dir, `${safeId}.bin`);
-  if (!fs.existsSync(filePath)) {
-    const err = new Error('File not found');
-    err.status = 404;
+  let raw;
+  if (FILE_STORAGE_BACKEND === 'gridfs') {
+    const db = mongoose.connection.db;
+    if (mongoose.connection.readyState !== 1 || !db) {
+      const err = new Error('MongoDB must be connected to use GridFS prescription storage.');
+      err.status = 503;
+      throw err;
+    }
+    const file = await db.collection(`${GRIDFS_BUCKET_NAME}.files`).findOne({
+      _id: safeId,
+      'metadata.organizationHash': organizationHash(organizationId),
+      'metadata.encrypted': true,
+    });
+    if (!file) {
+      const err = new Error('File not found');
+      err.status = 404;
+      throw err;
+    }
+    if (!Number.isSafeInteger(file.length) || file.length < 29 || file.length > MAX_FILE_BYTES + 28
+      || file.length !== file.metadata.originalSize + 28) {
+      const err = new Error('Stored file is incomplete or corrupted.');
+      err.status = 500;
+      throw err;
+    }
+    const chunks = [];
+    for await (const chunk of gridFsBucket().openDownloadStream(safeId)) {
+      chunks.push(Buffer.from(chunk));
+    }
+    raw = Buffer.concat(chunks);
+  } else {
+    const dir = orgDir(organizationId);
+    const filePath = path.join(dir, `${safeId}.bin`);
+    if (!fs.existsSync(filePath)) {
+      const err = new Error('File not found');
+      err.status = 404;
+      throw err;
+    }
+    raw = fs.readFileSync(filePath);
+  }
+  if (raw.length < 29) {
+    const err = new Error('Stored file is incomplete or corrupted.');
+    err.status = 500;
     throw err;
   }
-  const raw = fs.readFileSync(filePath);
   const iv = raw.subarray(0, 12);
   const tag = raw.subarray(12, 28);
   const ciphertext = raw.subarray(28);

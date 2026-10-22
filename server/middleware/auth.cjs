@@ -2,11 +2,11 @@ const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('../config/env.cjs');
 const { createRepository } = require('../db/repositories/repositoryFactory.cjs');
 const models = require('../db/models/index.cjs');
+const { sessionToken } = require('../services/sessionCookie.cjs');
 const userRepo = createRepository({ name: 'users', model: models.User, prefix: 'U' });
 
 async function auth(req, res, next) {
-  const h = req.headers.authorization || '';
-  const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+  const token = sessionToken(req);
   if (!token) {
     return res.status(401).json({ error: 'Not authenticated' });
   }

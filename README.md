@@ -32,9 +32,9 @@ prescription fingerprints to Polygon Amoy.
 - **Direct medicine procurement** — pharmacies and hospitals order available
   released stock from manufacturers; manufacturers review and ship orders, and
   buyers confirm receipt into their organization inventory
-- **Security** — JWT auth with DB-backed identity, bcrypt, rate limiting,
-  production CORS allowlist, encrypted prescription-file storage, security battery
-  (`npm run test:security` — 34 checks)
+- **Security** — DB-backed identity, HttpOnly session cookies, bcrypt, rate
+  limiting, production CORS allowlist, encrypted MongoDB GridFS file storage, and a
+  security battery (`npm run test:security`)
 
 ## Tech stack
 
@@ -60,7 +60,13 @@ registration. Production startup requires `JWT_SECRET` and `CORS_ORIGINS`, with
 `CORS_ORIGINS` set to exact comma-separated frontend origins. The
 `PHARMACHAIN_MONGODB_URI` and stable 32-byte `PHARMACHAIN_FILE_KEY` are also
 required in production; the backend will not start with an in-memory database
-fallback. Back up the file key separately and keep it unchanged across deploys.
+fallback or local file storage. Production prescription files are encrypted
+and stored in MongoDB GridFS in the configured database, so budget Atlas
+storage and backups for both data and file chunks. Back up the file key
+separately and keep it unchanged across deploys. Production authentication uses
+an HttpOnly cookie, not a browser-stored JWT; see
+[the deployment guide](./docs/DEPLOYMENT.md) for the cross-site cookie and
+custom-domain requirements.
 Vite API proxy follows `PORT` from `.env`; set `PHARMACHAIN_API_PORT` only when
 the backend uses a different port. Demo users are not automatically created
 in production.
@@ -87,7 +93,8 @@ models have limited availability and rate limits.
 | `npm run typecheck` | TypeScript check |
 | `npm run seed` | Seed the login-page demo users |
 | `npm run test:backend` | Backend test suite (49 checks) |
-| `npm run test:security` | Security test battery (34 checks) |
+| `npm run test:security` | Security test battery (40 checks) |
+| `npm run test:gridfs` | Mocked GridFS encryption, tenant-isolation, and integrity checks |
 | `npm run test:e2e:hf` | Live E2E with a real prescription image |
 | `npm run import:medicine-master` | Build the local medicine reference index |
 | `npm run deploy:registry` | Deploy the Polygon Amoy registry contract |

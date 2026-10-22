@@ -8,6 +8,7 @@ const validate = require('../middleware/validate.cjs');
 const z = require('zod');
 const { createRepository } = require('../db/repositories/repositoryFactory.cjs');
 const models = require('../db/models/index.cjs');
+const { setSessionCookie, clearSessionCookie } = require('../services/sessionCookie.cjs');
 
 const router = express.Router();
 const userRepository = createRepository({ name: 'users', model: models.User, prefix: 'U' });
@@ -53,7 +54,8 @@ router.post('/login', loginLimiter, validate(loginSchema), async (req, res, next
     const userWithoutHash = { ...user };
     delete userWithoutHash.passwordHash;
     
-    res.json({ token, user: userWithoutHash });
+    setSessionCookie(res, token);
+    res.json({ user: userWithoutHash });
   } catch (err) {
     next(err);
   }
@@ -79,13 +81,19 @@ router.post('/register', validate(registerSchema), async (req, res, next) => {
     const userWithoutHash = { ...user };
     delete userWithoutHash.passwordHash;
 
-    res.status(201).json({ token, user: userWithoutHash });
+    setSessionCookie(res, token);
+    res.status(201).json({ user: userWithoutHash });
   } catch (err) {
     if (err && err.code === 11000) {
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
     next(err);
   }
+});
+
+router.post('/logout', (req, res) => {
+  clearSessionCookie(res);
+  res.status(204).end();
 });
 
 router.get('/me', auth, async (req, res, next) => {

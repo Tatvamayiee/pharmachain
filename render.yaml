@@ -11,17 +11,13 @@ services:
     buildCommand: npm ci
     startCommand: node server/index.cjs
     healthCheckPath: /api/health
-    disk:
-      name: pharmachain-files
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
-      - key: PHARMACHAIN_FILE_STORAGE_DIR
-        value: /var/data/files
+      - key: PHARMACHAIN_FILE_STORAGE_BACKEND
+        value: gridfs
       # --- Set these in the Render dashboard (secret / environment-specific) ---
       - key: PHARMACHAIN_MONGODB_URI
         sync: false # MongoDB Atlas SRV string
@@ -32,6 +28,8 @@ services:
       - key: HF_TOKEN
         sync: false
       - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENAI_BASE_URL
         sync: false
