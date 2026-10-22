@@ -86,6 +86,7 @@ async function seedDemoStock() {
     { medicineName: 'Cetirizine', genericName: 'Cetirizine', batchNumber: 'CTZ-2412', expiryDate: '2028-01-31', availableQuantity: 400 },
     { medicineName: 'Omeprazole', genericName: 'Omeprazole', batchNumber: 'OMP-2409', expiryDate: '2027-04-30', availableQuantity: 150 },
     { medicineName: 'Metformin', genericName: 'Metformin', batchNumber: 'MET-2407', expiryDate: '2027-08-31', availableQuantity: 250 },
+    { medicineName: 'Pantoprazole', genericName: 'Pantoprazole', batchNumber: 'PNT-2413', expiryDate: '2027-11-30', availableQuantity: 10 },
   ];
   let created = 0;
   for (const org of DEMO_ORGS) {

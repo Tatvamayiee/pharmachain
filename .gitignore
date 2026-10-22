@@ -44,7 +44,7 @@ server/ml/models/*
 !server/ml/models/.gitkeep
 
 # Raw reference dataset + built master (31.8 MB CSV / 123 MB JSON).
-# Recreate with: node scripts/import-medicine-master.cjs
+# Recreate with: npm run import:medicine-master
 server/ml/reference/*.csv
 server/ml/reference/*.json
 
@@ -76,3 +76,5 @@ Doctor’s Handwritten Prescription BD dataset/
 *.err
 vite-log.txt
 staged.txt
+tmp_*
+ts_out*.txt

@@ -7,7 +7,7 @@ let win;
 let serverProc;
 
 function startServer() {
-  const serverPath = path.join(__dirname, '..', 'server', 'index.js');
+  const serverPath = path.join(__dirname, '..', 'server', 'index.cjs');
   serverProc = spawn(process.execPath, [serverPath], {
     stdio: 'inherit',
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },

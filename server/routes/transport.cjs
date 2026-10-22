@@ -8,30 +8,61 @@
 const crypto = require('crypto');
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const z = require('zod');
 const { JWT_SECRET } = require('../config/env.cjs');
 const { auth, requireRole } = require('../middleware/auth.cjs');
+const validate = require('../middleware/validate.cjs');
 const { createRepository } = require('../db/repositories/repositoryFactory.cjs');
 const models = require('../db/models/index.cjs');
 
 const router = express.Router();
-
-// Optional auth: identify the caller if a valid Bearer token is present, but
-// never reject — public scan/history reads stay open (minimal, safe fields).
-function optionalAuth(req, _res, next) {
-  const h = req.headers.authorization || '';
-  if (h.startsWith('Bearer ')) {
-    try {
-      const payload = jwt.verify(h.slice(7), JWT_SECRET);
-      req.user = { id: payload.id, name: payload.name, role: payload.role, organization: payload.organization || '' };
-    } catch { /* invalid token → treated as anonymous */ }
-  }
-  next();
-}
-router.use(optionalAuth);
-
 const shipmentRepo = createRepository({ name: 'shipments', model: models.Shipment, prefix: 'SHP' });
 const eventRepo = createRepository({ name: 'transportEvents', model: models.TransportEvent, prefix: 'TE' });
 const userRepo = createRepository({ name: 'users', model: models.User, prefix: 'U' });
+
+// Optional auth: identify the caller if a valid Bearer token is present, but
+// never reject — public scan/history reads stay open (minimal, safe fields).
+async function optionalAuth(req, _res, next) {
+  const h = req.headers.authorization || '';
+  if (h.startsWith('Bearer ')) {
+    let payload;
+    try {
+      payload = jwt.verify(h.slice(7), JWT_SECRET, { algorithms: ['HS256'] });
+    } catch {
+      return next();
+    }
+    if (!payload || typeof payload.id !== 'string' || !payload.id) return next();
+    try {
+      const user = await userRepo.findById(payload.id);
+      if (user?.status === 'active') {
+        req.user = {
+          id: user.id,
+          name: user.name,
+          role: user.role,
+          organization: user.organization || '',
+        };
+      }
+    } catch (err) {
+      return next(err);
+    }
+  }
+  return next();
+}
+router.use(optionalAuth);
+
+function canAccess(shipment, user) {
+  if (user.role === 'admin') return true;
+  const organization = user.organization || '';
+  return Boolean(organization && [shipment.senderId, shipment.receiverId, shipment.manufacturer].includes(organization))
+    || shipment.transporterId === user.id;
+}
+
+function isSender(shipment, user) {
+  return user.role === 'admin' || (
+    ['manufacturer', 'distributor'].includes(user.role)
+    && user.organization === shipment.senderId
+  );
+}
 
 // Who may update location/status for a transport QR scan. Server-side RBAC —
 // the UI mirrors this but never trusts it. Customer/admin deliberately cannot
@@ -77,6 +108,7 @@ router.post('/qr', auth, requireRole('manufacturer', 'admin', 'distributor'), as
     if (!shipmentCode) return res.status(400).json({ error: 'shipmentCode is required' });
     const s = await shipmentRepo.findOne({ code: String(shipmentCode) });
     if (!s) return res.status(404).json({ error: 'Shipment not found' });
+    if (!isSender(s, req.user)) return res.status(403).json({ error: 'Forbidden' });
 
     if (!s.transportQrId) {
       const id = `TRQ-${crypto.randomBytes(9).toString('base64url')}`;
@@ -92,6 +124,25 @@ router.post('/qr', auth, requireRole('manufacturer', 'admin', 'distributor'), as
       payload: `https://pharmachain.app/transport/${s.transportQrId}`,
       shipment: await shipmentSummary(s),
     });
+  } catch (err) { next(err); }
+});
+
+router.post('/assign', auth, requireRole(['manufacturer', 'distributor', 'admin']), validate({
+  body: z.object({
+    shipmentCode: z.string().trim().min(1).max(80),
+    transporterId: z.string().trim().min(1).max(100),
+  }).strict(),
+}), async (req, res, next) => {
+  try {
+    const shipment = await shipmentRepo.findOne({ code: req.body.shipmentCode });
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
+    if (!isSender(shipment, req.user)) return res.status(403).json({ error: 'Forbidden' });
+    const transporter = await userRepo.findById(req.body.transporterId);
+    if (!transporter || transporter.status !== 'active' || transporter.role !== 'transport') {
+      return res.status(422).json({ error: 'Select an active transporter account.' });
+    }
+    const updated = await shipmentRepo.updateById(shipment.id, { transporterId: transporter.id });
+    res.json({ shipment: await shipmentSummary(updated) });
   } catch (err) { next(err); }
 });
 
@@ -121,6 +172,7 @@ router.post('/scan', auth, async (req, res, next) => {
 
     const s = await shipmentRepo.findOne({ transportQrId: String(transportQrId) });
     if (!s) return res.status(404).json({ error: 'Unknown transport QR code' });
+    if (!canAccess(s, req.user)) return res.status(403).json({ error: 'You are not assigned to this shipment.' });
 
     if (String(s.status).toLowerCase() === 'delivered') {
       return res.status(409).json({ error: 'Shipment already delivered — timeline is closed.' });
@@ -133,8 +185,23 @@ router.post('/scan', auth, async (req, res, next) => {
     if (!STATUS_FLOW.includes(nextStatus)) {
       return res.status(422).json({ error: `Invalid status "${nextStatus}". Allowed: ${STATUS_FLOW.join(', ')}` });
     }
-    if (STATUS_FLOW.indexOf(nextStatus) < STATUS_FLOW.indexOf(mapLegacy(s.status)) && String(s.status).toLowerCase() !== 'created') {
+    const currentIndex = STATUS_FLOW.indexOf(mapLegacy(s.status));
+    const nextIndex = STATUS_FLOW.indexOf(nextStatus);
+    if (nextIndex < currentIndex) {
       return res.status(409).json({ error: `Cannot move backwards: shipment is already ${mapLegacy(s.status)}.` });
+    }
+    if (req.user.role === 'transport' && s.transporterId !== req.user.id) {
+      return res.status(403).json({ error: 'Shipment is not assigned to your transporter account.' });
+    }
+    if (['manufacturer', 'distributor'].includes(req.user.role) && (!isSender(s, req.user) || nextIndex > currentIndex + 1)) {
+      return res.status(403).json({ error: 'Sender accounts may only advance their shipment one checkpoint at a time.' });
+    }
+    if (['dealer', 'hospital', 'pharmacy'].includes(req.user.role)
+      && (req.user.organization !== s.receiverId || nextStatus !== 'DELIVERED')) {
+      return res.status(403).json({ error: 'Receiving organizations may only confirm delivery of their own shipments.' });
+    }
+    if (nextIndex > currentIndex + 1) {
+      return res.status(409).json({ error: 'Shipment checkpoints must be completed in order.' });
     }
 
     const event = await eventRepo.create({
@@ -183,7 +250,7 @@ router.get('/history/:qrId', async (req, res, next) => {
     const summary = await shipmentSummary(s);
 
     // Anonymous / customer: summary + public timeline, no internal actor IDs.
-    if (!req.user || !CAN_VIEW.has(req.user.role)) {
+    if (!req.user || !CAN_VIEW.has(req.user.role) || !canAccess(s, req.user)) {
       return res.json({
         shipment: summary,
         timeline: items.map((e) => ({ location: e.location, status: e.status, timestamp: e.timestamp, note: e.note })),
@@ -211,7 +278,7 @@ router.get('/shipments', auth, async (req, res, next) => {
     const { items } = await shipmentRepo.find({ sort: { createdAt: -1 }, limit: 500 });
     // Include shipments without a transport QR too — the manufacturer needs
     // them listed so they can generate one. Only cancelled boxes are hidden.
-    const visible = items.filter((s) => String(s.status).toUpperCase() !== 'CANCELLED');
+    const visible = items.filter((s) => String(s.status).toUpperCase() !== 'CANCELLED' && canAccess(s, req.user));
     res.json({ shipments: await Promise.all(visible.map(async (s) => ({ ...(await shipmentSummary(s)), hasTransportQr: Boolean(s.transportQrId) }))) });
   } catch (err) { next(err); }
 });

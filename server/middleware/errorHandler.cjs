@@ -1,5 +1,9 @@
 function errorHandler(err, req, res, next) {
   const isDev = process.env.NODE_ENV !== 'production';
+  if (err.type === 'entity.parse.failed') {
+    console.warn('[Request] Rejected malformed JSON body');
+    return res.status(400).json({ error: 'Malformed JSON request body.' });
+  }
   console.error('[Error]', err.name, err.message);
 
   if (err.name === 'ValidationError' || err.isJoi) {
@@ -16,4 +20,3 @@ function errorHandler(err, req, res, next) {
 }
 
 module.exports = errorHandler;
-

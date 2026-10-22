@@ -56,6 +56,8 @@ function buildFilters(query, memoryItems) {
   const total = list.length;
   if (page && limit) {
     list = list.slice((page - 1) * limit, page * limit);
+  } else if (limit) {
+    list = list.slice(0, limit);
   }
   return { list, total };
 }
@@ -84,6 +86,21 @@ function createRepository({ name, model, prefix, searchFields = [] }) {
     };
     mem.items.set(item.id, item);
     return { ...item };
+  }
+
+  async function insertMany(rows) {
+    if (!Array.isArray(rows)) throw new TypeError('insertMany requires an array');
+    if (isMongoActive()) {
+      const withIds = rows.map((row) => ({
+        ...row,
+        id: row.id || new (require('mongoose').Types.ObjectId)().toString(),
+      }));
+      const docs = await model.insertMany(withIds);
+      return docs.map(plain);
+    }
+    const inserted = [];
+    for (const row of rows) inserted.push(await create(row));
+    return inserted;
   }
 
   async function findById(id) {
@@ -135,8 +152,9 @@ function createRepository({ name, model, prefix, searchFields = [] }) {
         items = await q.skip((page - 1) * limit).limit(limit).lean();
         total = await model.countDocuments(filter);
       } else {
+        if (limit) q.limit(limit);
         items = await q.lean();
-        total = items.length;
+        total = limit ? await model.countDocuments(filter) : items.length;
       }
       return { items: items.map(plain), total };
     }
@@ -161,7 +179,7 @@ function createRepository({ name, model, prefix, searchFields = [] }) {
     return mem.items.delete(id);
   }
 
-  return { name, create, findById, findOne, updateById, find, count, deleteById, _mem: mem };
+  return { name, create, insertMany, findById, findOne, updateById, find, count, deleteById, _mem: mem };
 }
 
 module.exports = { createRepository, plain };

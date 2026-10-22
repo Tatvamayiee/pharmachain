@@ -1,9 +1,11 @@
 // ---------------------------------------------------------------------------
 // Vision prescription analyzer (server-side only). Provider-agnostic: one
-// OpenAI-compatible chat/completions wire format, two configurable providers.
+// OpenAI-compatible chat/completions wire format.
 //
+//   OpenRouter (free-tier vision model; no paid fallback) — preferred when selected
+//   Cloudflare Workers AI (vision model)                    — preferred when configured
 //   PHARMACHAIN_AI_* (OpenAI vision, e.g. gpt-4o-mini)   — used when set
-//   HF_TOKEN (Hugging Face Inference Providers, Qwen VL) — used otherwise
+//   HF_TOKEN (Hugging Face Inference Providers, vision-language model) — used otherwise
 //   neither                                              — /analyze reports 501
 //
 // Hard rules implemented here:
@@ -15,26 +17,56 @@
 //   - Uncertainty becomes an extraction warning, never a clinical alert.
 // ---------------------------------------------------------------------------
 
-const { OPENAI_API_KEY, AI_PROVIDER, AI_BASE_URL, AI_API_KEY, AI_MODEL, HF_TOKEN, HF_MODEL } = require('../config/env.cjs');
+const {
+  OPENAI_API_KEY, AI_PROVIDER, AI_BASE_URL, AI_API_KEY, AI_MODEL, HF_TOKEN, HF_MODEL,
+  OPENROUTER_API_KEY, OPENROUTER_MODEL,
+  CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_AI_MODEL,
+} = require('../config/env.cjs');
 
 const DEFAULT_HF_ROUTER_URL = 'https://router.huggingface.co/v1/chat/completions';
 const DEFAULT_OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+const DEFAULT_OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const DEFAULT_OPENROUTER_MODEL = 'minimax/minimax-m3.1-flash:free';
+const DEFAULT_CLOUDFLARE_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
 const TIMEOUT_MS = 90_000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const OPENROUTER_MAX_TOKENS = 4096;
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/jpg', 'application/pdf']);
 
 /**
- * Resolve the active vision provider from env.
- * Precedence:
- * 1. OpenAI (if AI_PROVIDER is 'openai' / 'openai-compatible' or if OPENAI_API_KEY is present and provider !== 'huggingface')
- * 2. Hugging Face (if HF_TOKEN is present)
- * 3. null (returns 501 unconfigured error)
+ * Resolve the active vision provider from env. An explicitly selected but
+ * unconfigured provider fails closed rather than silently using another key.
  */
 function resolveProvider() {
   const openaiKey = OPENAI_API_KEY || AI_API_KEY;
+  const isExplicitOpenRouter = AI_PROVIDER === 'openrouter';
+  const isExplicitCloudflare = AI_PROVIDER === 'cloudflare';
   const isExplicitHf = AI_PROVIDER === 'huggingface';
   const isExplicitOpenai = AI_PROVIDER === 'openai' || AI_PROVIDER === 'openai-compatible';
-  
+
+  if (isExplicitOpenRouter || (AI_PROVIDER !== 'none' && OPENROUTER_API_KEY)) {
+    if (!OPENROUTER_API_KEY || !OPENROUTER_MODEL.endsWith(':free')) return null;
+    return {
+      id: 'openrouter',
+      url: DEFAULT_OPENROUTER_URL,
+      token: OPENROUTER_API_KEY,
+      model: OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL,
+      label: 'OpenRouter (free model)',
+    };
+  }
+  if (isExplicitCloudflare || (
+    AI_PROVIDER !== 'none' && CLOUDFLARE_ACCOUNT_ID && CLOUDFLARE_API_TOKEN
+  )) {
+    if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) return null;
+    return {
+      id: 'cloudflare',
+      url: `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/v1/chat/completions`,
+      token: CLOUDFLARE_API_TOKEN,
+      model: CLOUDFLARE_AI_MODEL || DEFAULT_CLOUDFLARE_MODEL,
+      label: 'Cloudflare Workers AI',
+    };
+  }
+  if (isExplicitOpenRouter) return null;
   if (openaiKey && AI_PROVIDER !== 'none' && !isExplicitHf && !/platform\.openai\.com/i.test(AI_BASE_URL)) {
     return {
       id: 'openai',
@@ -49,10 +81,11 @@ function resolveProvider() {
       id: 'huggingface',
       url: process.env.HF_TEST_STUB_URL || DEFAULT_HF_ROUTER_URL,
       token: HF_TOKEN,
-      model: HF_MODEL || 'Qwen/Qwen2.5-VL-3B-Instruct',
+      model: HF_MODEL || 'deepseek-ai/DeepSeek-V4.1-Flash-1017',
       label: 'Hugging Face',
     };
   }
+  if (isExplicitCloudflare) return null;
   if (openaiKey && isExplicitOpenai) {
     return {
       id: 'openai',
@@ -67,6 +100,26 @@ function resolveProvider() {
 
 function isConfigured() {
   return resolveProvider() !== null;
+}
+
+function configurationError() {
+  if (AI_PROVIDER === 'openrouter') {
+    if (!OPENROUTER_API_KEY) {
+      return 'OpenRouter is selected but not configured. Set OPENROUTER_API_KEY in the backend .env file.';
+    }
+    if (!OPENROUTER_MODEL.endsWith(':free')) {
+      return 'OpenRouter is configured for free-only use. Set OPENROUTER_MODEL to a model ending in :free.';
+    }
+  }
+  if (AI_PROVIDER === 'cloudflare') {
+    const missing = [];
+    if (!CLOUDFLARE_ACCOUNT_ID) missing.push('CLOUDFLARE_ACCOUNT_ID');
+    if (!CLOUDFLARE_API_TOKEN) missing.push('CLOUDFLARE_API_TOKEN');
+    if (missing.length) {
+      return `Cloudflare Workers AI is selected but not configured. Set ${missing.join(' and ')} in the backend .env file.`;
+    }
+  }
+  return 'AI analysis is not configured on the server.';
 }
 
 function providerMeta() {
@@ -140,6 +193,18 @@ function extractJson(text) {
   } catch {
     return null;
   }
+}
+
+function extractMessageText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((part) => part && typeof part.text === 'string')
+      .map((part) => part.text)
+      .join('\n');
+  }
+  if (content && typeof content === 'object') return JSON.stringify(content);
+  return '';
 }
 
 function str(v) { return typeof v === 'string' && v.trim() ? v.trim() : null; }
@@ -243,6 +308,9 @@ async function analyzeImage(buffer, mimetype) {
       },
       body: JSON.stringify({
         model: provider.model,
+        ...(provider.id === 'openrouter' ? { provider: { allow_fallbacks: false } } : {}),
+        ...(provider.id === 'openrouter' ? { response_format: { type: 'json_object' } } : {}),
+        ...(provider.id === 'openrouter' ? { reasoning: { effort: 'low' } } : {}),
         messages: [
           {
             role: 'user',
@@ -252,7 +320,7 @@ async function analyzeImage(buffer, mimetype) {
             ],
           },
         ],
-        max_tokens: 1400,
+        max_tokens: provider.id === 'openrouter' ? OPENROUTER_MAX_TOKENS : 1400,
         temperature: 0,
       }),
       signal: controller.signal,
@@ -274,11 +342,24 @@ async function analyzeImage(buffer, mimetype) {
   if (!res.ok) {
     let errBody = null;
     try { errBody = await res.json(); } catch { /* non-JSON error body */ }
-    const providerMsg = errBody && errBody.error && (errBody.error.message || errBody.error.code)
-      ? (errBody.error.message || errBody.error.code)
-      : (errBody && errBody.message ? errBody.message : `HTTP ${res.status}`);
+    const providerError = errBody && errBody.error;
+    const providerMsg = typeof providerError === 'string'
+      ? providerError
+      : providerError && (providerError.message || providerError.code)
+        ? (providerError.message || providerError.code)
+        : (errBody && (errBody.message || errBody.detail) ? (errBody.message || errBody.detail) : `HTTP ${res.status}`);
 
     console.error(`[ANALYZER] ${provider.label} returned error status ${res.status}:`, providerMsg);
+
+    if (res.status === 402) {
+      const e = new Error(provider.id === 'huggingface'
+        ? 'Hugging Face rejected this inference request with HTTP 402 (payment required). Add inference credits or enable billing for your Hugging Face account, and verify access to the model provider.'
+        : provider.id === 'cloudflare'
+          ? 'Cloudflare Workers AI rejected this request. Check the Workers AI free daily allocation and account billing settings.'
+          : `${provider.label} rejected this inference request with HTTP 402 (payment required). Check the provider account billing.`);
+      e.status = 402;
+      throw e;
+    }
 
     // Free-tier transient rate limits (429): one short backoff retry
     if (res.status === 429 && !/quota|credit|billing/i.test(providerMsg)) {
@@ -291,6 +372,9 @@ async function analyzeImage(buffer, mimetype) {
           headers: { Authorization: `Bearer ${provider.token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: provider.model,
+            ...(provider.id === 'openrouter' ? { provider: { allow_fallbacks: false } } : {}),
+            ...(provider.id === 'openrouter' ? { response_format: { type: 'json_object' } } : {}),
+            ...(provider.id === 'openrouter' ? { reasoning: { effort: 'low' } } : {}),
             messages: [
               {
                 role: 'user',
@@ -300,7 +384,7 @@ async function analyzeImage(buffer, mimetype) {
                 ],
               },
             ],
-            max_tokens: 1400,
+            max_tokens: provider.id === 'openrouter' ? OPENROUTER_MAX_TOKENS : 1400,
             temperature: 0,
           }),
           signal: controller.signal,
@@ -331,11 +415,21 @@ async function analyzeImage(buffer, mimetype) {
 
   console.log('[ANALYZER] Response structure received from AI');
 
-  const content = body && Array.isArray(body.choices) && body.choices[0]
-    && body.choices[0].message ? body.choices[0].message.content : null;
-  const parsed = extractJson(typeof content === 'string' ? content : JSON.stringify(content));
+  const message = body && Array.isArray(body.choices) && body.choices[0]
+    ? body.choices[0].message : null;
+  const content = extractMessageText(message && message.content);
+  const parsed = extractJson(content);
   if (!parsed) {
-    const e = new Error('AI returned an unparsable response. Please retry with a clearer prescription image.');
+    console.error('[ANALYZER] AI response was not valid JSON:', JSON.stringify({
+      provider: provider.id,
+      contentLength: content.length,
+      finishReason: body && body.choices && body.choices[0] && body.choices[0].finish_reason || null,
+      reasoningTokens: body && body.usage && body.usage.completion_tokens_details
+        ? body.usage.completion_tokens_details.reasoning_tokens || 0 : null,
+      completionTokens: body && body.usage ? body.usage.completion_tokens || null : null,
+      refusal: Boolean(message && message.refusal),
+    }));
+    const e = new Error('AI returned a response the scanner could not read as JSON. Please retry once; if it continues, use a clearer image or try again later.');
     e.status = 502;
     throw e;
   }
@@ -346,6 +440,6 @@ async function analyzeImage(buffer, mimetype) {
 }
 
 module.exports = {
-  analyzeImage, isConfigured, providerMeta, validateImage, normalizeResult,
-  _internal: { EXTRACTION_PROMPT, extractJson, resolveProvider },
+  analyzeImage, isConfigured, configurationError, providerMeta, validateImage, normalizeResult,
+  _internal: { EXTRACTION_PROMPT, extractJson, extractMessageText, resolveProvider },
 };

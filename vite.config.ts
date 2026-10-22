@@ -1,7 +1,10 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath, URL } from 'node:url';
+
+// Load the project PORT so the API proxy follows the backend configuration.
+const env = loadEnv('development', process.cwd(), '');
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -90,16 +93,16 @@ workbox: {
     // Pin the dev server to an unused port so it never collides with another
     // Vite instance (5173-5175 are often occupied). Override with
     // `vite --port <n>`; PHARMACHAIN_API_PORT keeps the proxy in lockstep if
-    // scripts/dev-server-unused.mjs could not take the default backend port.
+    // scripts/dev/dev-server-unused.mjs could not take the default backend port.
     port: 5176,
     strictPort: true,
-    // Proxy API calls to the Express backend (MongoDB) on :41838. The SPA
+    // Proxy API calls to the Express backend (MongoDB) on :41837 by default. The SPA
     // pages live at /verify, /track and /transport (client-side routes for
     // the QR 1 / QR 2 deep links) — they are NOT proxied, so full-page loads
     // reach the React app, not the backend.
     proxy: {
       '/api': {
-        target: `http://localhost:${process.env.PHARMACHAIN_API_PORT || 41838}`,
+        target: `http://localhost:${env.PHARMACHAIN_API_PORT || env.PORT || 41837}`,
         changeOrigin: true,
       },
     },

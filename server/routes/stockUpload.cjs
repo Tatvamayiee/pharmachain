@@ -7,7 +7,16 @@
 // still imported. Uses the existing repos/zod/validate/auth stack only.
 // ---------------------------------------------------------------------------
 
-const XLSX = require('xlsx');
+// `xlsx` is an optional dependency: CSV upload works without it, and only the
+// XLSX path degrades with a clear 501 instead of crashing the whole server on
+// require(). Load lazily so a missing package cannot take down Express.
+let XLSX = null;
+let xlsxLoadError = null;
+try {
+  XLSX = require('xlsx');
+} catch (e) {
+  xlsxLoadError = e.message;
+}
 
 const express = require('express');
 const multer = require('multer');
@@ -63,7 +72,7 @@ function toIsoDate(v) {
   if (m1) { const [, d, m, y] = m1; return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`; }
   const num = Number(s);
   if (Number.isFinite(num) && num > 20000 && num < 80000) {              // Excel serial
-    const d = XLSX.SSF.parse_date_code(num);
+    const d = XLSX.ssfParseDate(num);
     if (d) return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
   }
   const d = new Date(s);
@@ -87,6 +96,13 @@ router.post('/stock/upload', auth, requireRole('manufacturer', 'admin'),
   upload.single('file'), async (req, res, next) => {
     try {
       if (!req.file) return res.status(422).json({ error: 'No file received. Attach a CSV or Excel file in the "file" field.' });
+
+      if (!XLSX) {
+        return res.status(501).json({
+          error: 'Spreadsheet parsing is unavailable on this server: the "xlsx" package is not installed. Run `npm install xlsx` to enable CSV/Excel uploads.',
+          details: xlsxLoadError || undefined,
+        });
+      }
 
       let wb;
       try {

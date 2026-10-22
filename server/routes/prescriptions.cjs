@@ -127,27 +127,68 @@ router.get('/:id', auth, requireRole(allowedRoles), async (req, res, next) => {
   }
 });
 
+const prescriptionPatchSchema = {
+  body: z.object({
+    medicines: z.array(z.record(z.unknown())).max(100).optional(),
+    interactionAlerts: z.array(z.record(z.unknown())).max(200).optional(),
+    dosageAlerts: z.array(z.record(z.unknown())).max(200).optional(),
+    extractedText: z.string().max(100_000).optional(),
+    analysisProvider: z.string().max(80).optional(),
+    analysisModel: z.string().max(160).optional(),
+    analysisConfidence: z.number().min(0).max(1).nullable().optional(),
+    requiresHumanReview: z.boolean().optional(),
+  }).strict(),
+};
+
 router.patch('/:id', auth, requireRole(allowedRoles), async (req, res, next) => {
+  try {
+    const prescription = await prescriptionRepo.findOne({ prescriptionId: req.params.id });
+    if (!prescription) return res.status(404).json({ error: 'Prescription not found' });
+    if (!canAccess(req, prescription)) return res.status(403).json({ error: 'Forbidden' });
+    req.prescription = prescription;
+    return next();
+  } catch (err) {
+    return next(err);
+  }
+}, (req, res, next) => {
+  const workflowFields = ['status', 'reviewChecklist', 'pharmacistReviewer', 'reviewNotes'];
+  if (workflowFields.some((field) => Object.prototype.hasOwnProperty.call(req.body || {}, field))) {
+    return res.status(400).json({ error: 'Workflow fields must be changed through their dedicated endpoints.' });
+  }
+  return next();
+}, validate(prescriptionPatchSchema), async (req, res, next) => {
+  try {
+    const updated = await prescriptionRepo.updateById(req.prescription.id, req.body);
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const statusTransitions = {
+  uploaded: ['processing'],
+  processing: ['analyzed', 'needs_correction', 'safety_review_required'],
+  analyzed: ['needs_correction', 'safety_review_required', 'clarification_requested'],
+  needs_correction: ['processing', 'analyzed', 'safety_review_required'],
+  safety_review_required: ['needs_correction', 'clarification_requested'],
+  clarification_requested: ['needs_correction', 'safety_review_required'],
+};
+const statusSchema = {
+  body: z.object({
+    status: z.enum(['processing', 'analyzed', 'needs_correction', 'safety_review_required', 'clarification_requested']),
+  }).strict(),
+};
+
+router.post('/:id/status', auth, requireRole(allowedRoles), validate(statusSchema), async (req, res, next) => {
   try {
     const p = await prescriptionRepo.findOne({ prescriptionId: req.params.id });
     if (!p) return res.status(404).json({ error: 'Prescription not found' });
     if (!canAccess(req, p)) return res.status(403).json({ error: 'Forbidden' });
-
-    const allowedUpdates = [
-      'status', 'medicines', 'interactionAlerts', 'dosageAlerts', 'extractedText',
-      'reviewChecklist', 'pharmacistReviewer', 'reviewNotes', 'analysisProvider',
-      'analysisModel', 'analysisConfidence', 'requiresHumanReview', 'analysisHistory',
-      'parallelAnalysis', 'lastReanalysisProvider', 'lastReanalysisAt'
-    ];
-
-    const patch = {};
-    for (const key of allowedUpdates) {
-      if (req.body[key] !== undefined) {
-        patch[key] = req.body[key];
-      }
+    if (!(statusTransitions[p.status] || []).includes(req.body.status)) {
+      return res.status(400).json({ error: `Cannot move prescription from ${p.status} to ${req.body.status}.` });
     }
-
-    const updated = await prescriptionRepo.updateById(p.id, patch);
+    const updated = await prescriptionRepo.updateById(p.id, { status: req.body.status });
+    await createAudit(p.prescriptionId, req.user, 'STATUS_CHANGED', `Status changed to ${req.body.status}`);
     res.json(updated);
   } catch (err) {
     next(err);
@@ -280,7 +321,7 @@ router.post('/:id/analyze', auth, requireRole(allowedRoles), async (req, res, ne
     }
 
     if (!huggingfacePrescriptionAnalyzer.isConfigured()) {
-      return res.status(501).json({ error: 'AI analysis is not configured on the server.' });
+      return res.status(501).json({ error: huggingfacePrescriptionAnalyzer.configurationError() });
     }
 
     try {
@@ -533,6 +574,9 @@ router.post('/:id/approve', auth, requireRole(allowedRoles), async (req, res, ne
     if (!p) return res.status(404).json({ error: 'Prescription not found' });
     if (!canAccess(req, p)) return res.status(403).json({ error: 'Forbidden' });
     
+    if (p.status !== 'safety_review_required') {
+      return res.status(400).json({ error: 'Prescription must pass safety review before approval.' });
+    }
     if (!p.reviewChecklist || !p.reviewChecklist.decisionConfirmed) {
       return res.status(400).json({ error: 'Cannot approve without completing checklist' });
     }
@@ -561,6 +605,9 @@ router.post('/:id/reject', auth, requireRole(allowedRoles), validate(rejectSchem
     const p = await prescriptionRepo.findOne({ prescriptionId: req.params.id });
     if (!p) return res.status(404).json({ error: 'Prescription not found' });
     if (!canAccess(req, p)) return res.status(403).json({ error: 'Forbidden' });
+    if (['dispensed', 'cancelled'].includes(p.status)) {
+      return res.status(400).json({ error: `Cannot reject a ${p.status} prescription.` });
+    }
 
     const updated = await prescriptionRepo.updateById(p.id, { status: 'rejected' });
     await createAudit(p.prescriptionId, req.user, 'REJECTED', `Rejected: ${req.body.reason}`);

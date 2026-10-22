@@ -50,13 +50,19 @@ const ShipmentSchema = new Schema({
   batchId: { type: String, default: '' },
   senderId: { type: String, default: '' },
   receiverId: { type: String, default: '' },
+  transporterId: { type: String, default: '' },
   destination: { type: String, default: '' },
   route: { type: [String], default: [] },
   quantity: { type: Number, default: 1 },
   drugName: { type: String, default: '' },
   batch: { type: String, default: '' },
   manufacturer: { type: String, default: '' },
-  status: { type: String, enum: ['created', 'in_transit', 'delivered', 'verified'], default: 'created' },
+  status: {
+    type: String,
+    enum: ['created', 'prepared', 'packed', 'picked_up', 'dispatched', 'in_transit', 'at_distribution_center',
+      'out_for_delivery', 'at_pharmacy', 'delivered', 'verified', 'cancelled'],
+    default: 'created',
+  },
   trackingNumber: { type: String, default: '' },
   checkpoints: [{
     at: String, by: String, note: String,
@@ -249,6 +255,32 @@ const BillSchema = new Schema({
   saleIds: { type: [String], default: [] },
 }, base);
 
+const ProcurementOrderSchema = new Schema({
+  id: { type: String, required: true, unique: true },
+  buyerId: { type: String, required: true, index: true },
+  buyerName: { type: String, default: '' },
+  buyerRole: { type: String, enum: ['dealer', 'hospital'], required: true },
+  buyerOrganization: { type: String, required: true, index: true },
+  manufacturerId: { type: String, required: true, index: true },
+  medicineId: { type: String, required: true },
+  medicineName: { type: String, required: true },
+  quantity: { type: Number, required: true, min: 1 },
+  notes: { type: String, default: '' },
+  decisionNote: { type: String, default: '' },
+  status: {
+    type: String,
+    enum: ['pending', 'accepted', 'rejected', 'shipped', 'received', 'cancelled'],
+    default: 'pending',
+    index: true,
+  },
+  allocations: [{
+    batchId: String,
+    batchNumber: String,
+    expiryDate: String,
+    quantity: Number,
+  }],
+}, base);
+
 const models = {
   User: mongoose.models.User || mongoose.model('User', UserSchema),
   Bill: mongoose.models.Bill || mongoose.model('Bill', BillSchema),
@@ -263,6 +295,7 @@ const models = {
   Sale: mongoose.models.Sale || mongoose.model('Sale', SaleSchema),
   QRVerification: mongoose.models.QRVerification || mongoose.model('QRVerification', QRVerificationSchema),
   TransportEvent: mongoose.models.TransportEvent || mongoose.model('TransportEvent', TransportEventSchema),
+  ProcurementOrder: mongoose.models.ProcurementOrder || mongoose.model('ProcurementOrder', ProcurementOrderSchema),
 };
 
 module.exports = models;

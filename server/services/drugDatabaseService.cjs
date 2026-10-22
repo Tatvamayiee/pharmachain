@@ -17,7 +17,7 @@ const medicineRepo = createRepository({ name: 'drug_database', model: models.Dru
 // ---------------------------------------------------------------------------
 // MEDICINE MASTER DATABASE (imported, MIT-licensed source).
 // Loaded lazily from server/ml/reference/medicine-master.json (built by
-// scripts/import-medicine-master.cjs). EXTENDS — never overwrites — the
+// scripts/data/import-medicine-master.cjs). EXTENDS — never overwrites — the
 // curated REFERENCE_MEDICINES above, which keep clinical-dosing priority.
 // Imported records prove NAME EXISTENCE only; they carry no clinical-dosing
 // fields, and validation never treats existence as medical appropriateness.
@@ -30,7 +30,7 @@ function loadMaster() {
   if (masterIndex || masterLoadError) return masterIndex;
   try {
     if (!fs.existsSync(MASTER_PATH)) {
-      masterLoadError = 'medicine-master.json not built yet (run scripts/import-medicine-master.cjs)';
+      masterLoadError = 'medicine-master.json not built yet (run npm run import:medicine-master)';
       return null;
     }
     const raw = JSON.parse(fs.readFileSync(MASTER_PATH, 'utf8'));

@@ -9,7 +9,7 @@
 //   - Provider credentials never reach any log or client response.
 //
 // Supported providers:
-//   huggingface   — HF Inference Router (Qwen3-VL-30B) [primary live provider]
+//   huggingface   — HF Inference Router (DeepSeek V4.1 Flash) [primary live provider]
 //   gemini        — Google Gemini (model via GEMINI_MODEL, default gemini-2.5-pro)
 //   gpt5          — OpenAI GPT-5
 //   googlevision  — Google Cloud Vision API (OCR, no medicine parsing)
@@ -28,7 +28,9 @@ const execFileAsync = util.promisify(execFile);
 const {
   OPENAI_API_KEY, AI_PROVIDER, AI_BASE_URL, AI_API_KEY, AI_MODEL,
 
+  OPENROUTER_API_KEY, OPENROUTER_MODEL,
   HF_TOKEN, HF_MODEL,
+  CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_AI_MODEL,
   GEMINI_API_KEY, GEMINI_MODEL, GPT5_API_KEY, GOOGLE_VISION_API_KEY,
   AWS_TEXTract_ACCESS_KEY, AWS_TEXTract_SECRET_KEY,
   AZURE_AI_VISION_KEY, OLMOCR_TOKEN, PADDLE_PYTHON,
@@ -40,10 +42,28 @@ const ANALYSIS_TIMEOUT_MS = 90_000;
 // Provider catalogue — only declares shape; credentials checked per-call.
 // ---------------------------------------------------------------------------
 const PROVIDER_CATALOGUE = {
+  openrouter: {
+    label: 'OpenRouter (free vision model)',
+    description: 'OpenRouter hosted free vision model; paid fallbacks disabled',
+    model: OPENROUTER_MODEL || 'minimax/minimax-m3.1-flash:free',
+    type: 'openai-compat',
+    url: () => 'https://openrouter.ai/api/v1/chat/completions',
+    token: () => OPENROUTER_API_KEY,
+  },
+  cloudflare: {
+    label: 'Cloudflare Workers AI (Llama 3.2 Vision)',
+    description: 'Cloudflare Workers AI hosted vision model',
+    model: CLOUDFLARE_AI_MODEL || '@cf/meta/llama-3.2-11b-vision-instruct',
+    type: 'openai-compat',
+    url: () => CLOUDFLARE_ACCOUNT_ID
+      ? `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/v1/chat/completions`
+      : '',
+    token: () => CLOUDFLARE_API_TOKEN,
+  },
   huggingface: {
-    label: 'Hugging Face (Qwen3-VL)',
-    description: 'Qwen/Qwen3-VL-30B-A3B-Instruct via HF Router',
-    model: HF_MODEL || 'Qwen/Qwen3-VL-30B-A3B-Instruct',
+    label: 'Hugging Face (DeepSeek V4.1 Flash)',
+    description: 'deepseek-ai/DeepSeek-V4.1-Flash-1017 via HF Router',
+    model: HF_MODEL || 'deepseek-ai/DeepSeek-V4.1-Flash-1017',
     type: 'openai-compat',
     url: () => process.env.HF_TEST_STUB_URL || 'https://router.huggingface.co/v1/chat/completions',
     token: () => HF_TOKEN,
@@ -125,6 +145,7 @@ function resolveProvider(providerId) {
   if (!def) return null;
   const token = def.token();
   if (!token) return null;
+  if (providerId === 'openrouter' && !def.model.endsWith(':free')) return null;
   // AWS also needs a secret
   if (def.type === 'aws-textract' && !def.secret()) return null;
   // Azure needs an endpoint URL
@@ -302,6 +323,8 @@ async function analyzeOpenAiCompat(provider, imageBuffer, mimetype) {
     headers: { Authorization: `Bearer ${provider.resolvedToken}` },
     body: {
       model: provider.model,
+      ...(provider.id === 'openrouter' ? { provider: { allow_fallbacks: false } } : {}),
+      ...(provider.id === 'openrouter' ? { response_format: { type: 'json_object' } } : {}),
       messages: [{
         role: 'user',
         content: [

@@ -30,7 +30,7 @@ function optionalAuth(req, _res, next) {
   const h = req.headers.authorization || '';
   if (h.startsWith('Bearer ')) {
     try {
-      const payload = jwt.verify(h.slice(7), JWT_SECRET);
+      const payload = jwt.verify(h.slice(7), JWT_SECRET, { algorithms: ['HS256'] });
       req.user = { id: payload.id, name: payload.name || '', organization: payload.organization || '' };
     } catch { /* invalid/expired token → treated as anonymous */ }
   }

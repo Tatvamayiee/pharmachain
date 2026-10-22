@@ -1,7 +1,7 @@
 // Database connection with explicit in-memory fallback.
 // Never logs connection strings or credentials.
 const mongoose = require('mongoose');
-const { MONGODB_URI, DB_MODE_CONFIGURED, IS_DEV } = require('../config/env.cjs');
+const { MONGODB_URI, IS_DEV } = require('../config/env.cjs');
 
 let mode = 'in-memory'; // 'mongodb' | 'in-memory'
 let connected = false;
@@ -22,6 +22,11 @@ async function connect() {
     connected = true;
     console.log('Database mode: MongoDB connected');
   } catch (err) {
+    if (!IS_DEV) {
+      mode = 'unavailable';
+      connected = false;
+      throw new Error('MongoDB connection failed; production startup aborted.');
+    }
     mode = 'in-memory';
     connected = false;
     console.log(`Database mode: in-memory fallback (MongoDB connection failed: ${err.name || 'error'})`);

@@ -20,8 +20,10 @@ function storageKey() {
   if (raw) {
     // Accept hex (64 chars) or base64 (44 chars with padding) encoding 32 bytes.
     if (/^[0-9a-fA-F]{64}$/.test(raw)) return Buffer.from(raw, 'hex');
-    const b = Buffer.from(raw, 'base64');
-    if (b.length === 32) return b;
+    if (/^[A-Za-z0-9+/]{43}=$/.test(raw)) {
+      const b = Buffer.from(raw, 'base64');
+      if (b.length === 32) return b;
+    }
   }
   if (process.env.NODE_ENV === 'production') {
     throw new Error('PHARMACHAIN_FILE_KEY must be set to a 32-byte hex/base64 key in production');
@@ -42,14 +44,20 @@ function orgDir(org) {
 }
 
 function validateImageInput({ mimetype, size, buffer }) {
-  const ALLOWED = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'application/pdf'];
+  const ALLOWED = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'application/pdf']);
+  const contentType = String(mimetype || '').toLowerCase();
   const MAX_BYTES = 10 * 1024 * 1024;
-  if (!mimetype || !ALLOWED.includes(mimetype)) {
+  if (!ALLOWED.has(contentType)) {
     const err = new Error(`Unsupported file type "${mimetype || 'unknown'}". Allowed: PNG, JPG, WEBP, PDF.`);
     err.status = 422;
     throw err;
   }
-  if (!size || size <= 0) {
+  if (!Buffer.isBuffer(buffer) || size !== buffer.length) {
+    const err = new Error('Invalid file data.');
+    err.status = 422;
+    throw err;
+  }
+  if (size <= 0) {
     const err = new Error('Empty file.');
     err.status = 422;
     throw err;
@@ -61,19 +69,18 @@ function validateImageInput({ mimetype, size, buffer }) {
   }
   // Content-Type and filename are client-controlled — never trusted. Verify
   // magic bytes match the declared type before the file is persisted.
-  if (buffer && buffer.length >= 8) {
-    const sig = buffer.subarray(0, 8);
-    const startsWith = (...bytes) => bytes.every((b, i) => sig[i] === b);
-    const jpeg = startsWith(0xff, 0xd8, 0xff);
-    const png = startsWith(0x89, 0x50, 0x4e, 0x47);
-    const webp = startsWith(0x52, 0x49, 0x46, 0x46) && buffer.subarray(8, 12).toString('latin1') === 'WEBP';
-    const pdf = startsWith(0x25, 0x50, 0x44, 0x46);
-    const sniffed = jpeg ? 'image/jpeg' : png ? 'image/png' : webp ? 'image/webp' : pdf ? 'application/pdf' : null;
-    if (!sniffed || sniffed !== mimetype) {
-      const err = new Error('File content does not match its declared type.');
-      err.status = 422;
-      throw err;
-    }
+  const jpeg = buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  const png = buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const webp = buffer.length >= 12
+    && buffer.subarray(0, 4).toString('latin1') === 'RIFF'
+    && buffer.subarray(8, 12).toString('latin1') === 'WEBP';
+  const pdf = buffer.length >= 5 && buffer.subarray(0, 5).toString('ascii') === '%PDF-';
+  const sniffed = jpeg ? 'image/jpeg' : png ? 'image/png' : webp ? 'image/webp' : pdf ? 'application/pdf' : null;
+  const declared = contentType === 'image/jpg' ? 'image/jpeg' : contentType;
+  if (!sniffed || sniffed !== declared) {
+    const err = new Error('File content does not match its declared type.');
+    err.status = 422;
+    throw err;
   }
 }
 

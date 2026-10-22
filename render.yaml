@@ -27,6 +27,8 @@ services:
         sync: false # MongoDB Atlas SRV string
       - key: JWT_SECRET
         sync: false # long random string; REQUIRED in production
+      - key: PHARMACHAIN_FILE_KEY
+        sync: false # 32-byte hex or base64 key; REQUIRED in production
       - key: HF_TOKEN
         sync: false
       - key: OPENAI_API_KEY
@@ -44,4 +46,4 @@ services:
       - key: BLOCKCHAIN_PRIVATE_KEY
         sync: false
       - key: CORS_ORIGINS
-        sync: false # e.g. https://your-app.vercel.app
+        sync: false # required: comma-separated exact frontend origins
