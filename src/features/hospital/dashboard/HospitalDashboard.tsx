@@ -7,7 +7,7 @@ import { BarChartCard } from '../../../shared/components/ui/charts';
 import { SkeletonStats, SkeletonCard } from '../../../shared/components/ui/states';
 import { useFetch } from '../../../shared/hooks/useFetch';
 import { dataService } from '../../../platform/data/dataService';
-import { MEDICINE_BY_ID, medicineName, mockBatches, mockRecalls, mockShipments } from '../../../shared/data/mockData';
+import { MEDICINE_BY_ID, medicineName, mockBatches, mockShipments } from '../../../shared/data/mockData';
 
 const REQUESTS = [
   { id: 'rq1', medicine: 'Paracetamol 500 mg', quantity: 2000, department: 'Emergency', priority: 'emergency' as const, date: 'in 2 days', status: 'pending' as const },
@@ -23,6 +23,7 @@ const DEPARTMENTS = [
 
 export default function HospitalDashboard() {
   const stockQ = useFetch(() => dataService.getStock());
+  const recallsQ = useFetch(() => dataService.getRecalls());
   const loading = stockQ.loading;
   const stock = useMemo(() => stockQ.data ?? [], [stockQ.data]);
 
@@ -35,7 +36,9 @@ export default function HospitalDashboard() {
     const days = (new Date(s.expiryDate).getTime() - Date.now()) / 86_400_000;
     return days > 0 && days <= 90;
   });
-  const recalls = mockRecalls.filter((r) => r.status !== 'resolved');
+  // REAL recall cases from /api/platform/recalls (recalled batches); the mock
+  // list is only shown by dataService when the backend is unreachable.
+  const recalls = useMemo(() => (recallsQ.data ?? []).filter((r) => r.status !== 'resolved'), [recallsQ.data]);
 
   const stats = [
     { icon: Activity, label: 'Total Medicines', value: hospitalStock.length, tone: 'default' as const },

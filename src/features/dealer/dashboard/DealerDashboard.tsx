@@ -7,13 +7,14 @@ import { SkeletonStats, SkeletonCard, ErrorState } from '../../../shared/compone
 import { useFetch } from '../../../shared/hooks/useFetch';
 import { dataService } from '../../../platform/data/dataService';
 import { useAuth } from '../../../app/providers/AuthContext';
-import { MEDICINE_BY_ID, medicineName, mockBatches, mockRecalls } from '../../../shared/data/mockData';
+import { MEDICINE_BY_ID } from '../../../shared/data/mockData';
 import type { Sale } from '../../../shared/types';
 
 export default function DealerDashboard() {
   const { user } = useAuth();
   const salesQ = useFetch<Sale[]>(() => dataService.getSales());
   const stockQ = useFetch(() => dataService.getStock());
+  const recallsQ = useFetch(() => dataService.getRecalls());
   const loading = salesQ.loading || stockQ.loading;
   const sales = salesQ.data ?? [];
   const stock = useMemo(() => stockQ.data ?? [], [stockQ.data]);
@@ -34,7 +35,15 @@ export default function DealerDashboard() {
     const days = (new Date(s.expiryDate).getTime() - Date.now()) / 86_400_000;
     return days > 0 && days <= 90;
   });
-  const recalls = mockRecalls.filter((r) => r.status !== 'resolved');
+  // REAL recall cases from /api/platform/recalls (recalled batches); the mock
+  // list is only shown by dataService when the backend is unreachable.
+  const recalls = useMemo(() => (recallsQ.data ?? []).filter((r) => r.status !== 'resolved'), [recallsQ.data]);
+  // Match against this org's lots — the server recall's batchNumber is the
+  // join key to the stock shape (Stock.batchId carries the batch NUMBER).
+  const recalledInStock = useMemo(
+    () => recalls.filter((r) => myStock.some((st) => st.batchId === (r.batchNumber ?? r.batchId))),
+    [recalls, myStock],
+  );
 
   const stats = [
     { icon: Package, label: 'Medicines in Stock', value: myStock.reduce((s, r) => s + r.availableQuantity, 0), tone: 'default' as const },
@@ -42,7 +51,7 @@ export default function DealerDashboard() {
     { icon: ShoppingCart, label: 'Pending Orders', value: 4, tone: 'purple' as const },
     { icon: AlertTriangle, label: 'Low Stock Items', value: low.length, tone: 'warning' as const },
     { icon: Bell, label: 'Expiring Medicines', value: expiring.length, tone: 'warning' as const },
-    { icon: ShieldAlert, label: 'Recalled Items', value: recalls.reduce((s, r) => s + (myStock.some((st) => st.batchId === r.batchId) ? 1 : 0), 0), tone: 'error' as const },
+    { icon: ShieldAlert, label: 'Recalled Items', value: recalledInStock.length, tone: 'error' as const },
   ];
 
   if (salesQ.error && !loading) return <ErrorState message={salesQ.error} onRetry={salesQ.retry} />;
@@ -129,15 +138,12 @@ export default function DealerDashboard() {
             <p className="text-sm text-red-700">No active recalls.</p>
           ) : (
             <ul className="space-y-2">
-              {recalls.map((r) => {
-                const batch = mockBatches.find((b) => b.id === r.batchId);
-                return (
-                  <li key={r.id} className="rounded-xl bg-white px-3.5 py-3 shadow-sm">
-                    <p className="text-sm font-semibold text-slate-800">{batch ? medicineName(batch.medicineId) : 'Batch'} — <span className="font-mono text-xs">{batch?.batchNumber ?? r.batchId}</span></p>
-                    <p className="mt-0.5 text-xs text-red-700">{r.reason}</p>
-                  </li>
-                );
-              })}
+              {recalls.map((r) => (
+                <li key={r.id} className="rounded-xl bg-white px-3.5 py-3 shadow-sm">
+                  <p className="text-sm font-semibold text-slate-800">{r.medicineName || 'Batch'} — <span className="font-mono text-xs">{r.batchNumber || r.batchId}</span></p>
+                  <p className="mt-0.5 text-xs text-red-700">{r.reason}</p>
+                </li>
+              ))}
             </ul>
           )}
         </section>
