@@ -79,3 +79,5 @@ staged.txt
 tmp_*
 ts_out*.txt
 .env*
+!.env.example
+!.env.production

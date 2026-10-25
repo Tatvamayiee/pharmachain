@@ -99,12 +99,16 @@ real prescription or inventory data.
 The Capacitor Android project is in `android/`. Install a supported JDK —
 **JDK 17–21** (this machine's default JDK 27 fails the build with a
 `jlink` / `androidJdkImage` error) — set `ANDROID_HOME` to the SDK directory,
-then build using the same public backend URL as the web deployment:
+then build:
 
 ```powershell
-$env:VITE_API_URL = "https://<your-backend-host>"
 npm run android:debug
 ```
+
+The backend origin is committed in `.env.production` (`VITE_API_URL`), so
+production web builds and APK builds always target the deployed API without
+extra setup. Override it in the environment only if the backend moves; update
+`.env.production` (and the Vercel `VITE_API_URL` variable) to the new URL.
 
 The Capacitor WebView loads the app from `https://localhost`, so the APK sends
 `Origin: https://localhost` on every API request. Add `https://localhost` to
