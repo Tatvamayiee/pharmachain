@@ -45,8 +45,9 @@ jobs:
 
       - name: Build debug APK
         working-directory: android
-        env:        ANDROID_VERSION_CODE: ${{ github.run_number }}
-        ANDROID_VERSION_NAME: 1.${{ github.run_number }}
+        env:
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_VERSION_NAME: 1.${{ github.run_number }}
         run: |
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon
@@ -72,7 +73,9 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_VERSION_CODE: ${{ github.run_number }}
           ANDROID_VERSION_NAME: 1.${{ github.run_number }}
-        run: ./gradlew assembleRelease bundleRelease --no-daemon
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease bundleRelease --no-daemon
 
       - name: Upload APK and bundle
         uses: actions/upload-artifact@v4
