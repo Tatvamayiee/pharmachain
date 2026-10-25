@@ -91,10 +91,38 @@ real prescription or inventory data.
 | Key | Value |
 |---|---|
 | `VITE_API_URL` | `https://pharmachain-api.onrender.com` (your Render URL) |
-| `VITE_USE_BACKEND_AUTH` | `true` |
-| `VITE_PRESCRIPTION_BACKEND_ENABLED` | `true` |
 
 4. Deploy. `vercel.json` rewrites all non-API routes to `index.html` (SPA).
+
+### Android APK
+
+The Capacitor Android project is in `android/`. Install a supported JDK —
+**JDK 17–21** (this machine's default JDK 27 fails the build with a
+`jlink` / `androidJdkImage` error) — set `ANDROID_HOME` to the SDK directory,
+then build using the same public backend URL as the web deployment:
+
+```powershell
+$env:VITE_API_URL = "https://<your-backend-host>"
+npm run android:debug
+```
+
+The Capacitor WebView loads the app from `https://localhost`, so the APK sends
+`Origin: https://localhost` on every API request. Add `https://localhost` to
+the backend's `CORS_ORIGINS` on Render (comma-separated, alongside the Vercel
+origin) — otherwise all API calls from the APK are rejected with
+403 "Untrusted request origin".
+
+The debug APK is written to
+`android/app/build/outputs/apk/debug/app-debug.apk`. This is for testing and
+is not a Play Store release. A store release must be signed with a private
+keystore; keep the keystore and passwords out of Git and configure signing
+secrets only in the release build environment.
+
+The GitHub Actions workflow builds a debug APK on relevant pushes and manual
+runs. Set repository variable `VITE_API_URL` to the public backend origin.
+To enable signed APK/AAB artifacts, add repository secrets
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
+and `ANDROID_KEY_PASSWORD`. The signing keystore is never stored in the repo.
 
 The API uses HttpOnly, Secure, SameSite=None session cookies in production.
 Keep `CORS_ORIGINS` limited to exact trusted frontend origins; credentialed
