@@ -123,7 +123,8 @@ keystore; keep the keystore and passwords out of Git and configure signing
 secrets only in the release build environment.
 
 The GitHub Actions workflow builds a debug APK on relevant pushes and manual
-runs. Set repository variable `VITE_API_URL` to the public backend origin.
+runs. The backend origin is baked in from the committed `.env.production`;
+setting the optional repository variable `VITE_API_URL` overrides it.
 To enable signed APK/AAB artifacts, add repository secrets
 `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
 and `ANDROID_KEY_PASSWORD`. The signing keystore is never stored in the repo.
