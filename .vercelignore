@@ -1,0 +1,24 @@
+# Keep `vercel deploy` uploads aligned with what git-based deploys send:
+# the 149 MB medicine-master dataset is intentionally not in Git (docs/MEDICINE_MASTER.md),
+# and secrets/local artifacts must never ship inside a deployment.
+
+# Secrets — env values come from Vercel Environment Variables, not files
+.env
+.env.*
+
+# Local dataset too large for Vercel's 100 MB file limit (provision separately)
+server/ml/reference/
+
+# Local/runtime artifacts
+.data/
+dist/
+dev-dist/
+android/
+*.apk
+*.aab
+render-debug.txt
+
+# Scratch tooling
+.render-*.cjs
+.prod-smoke.cjs
+.demo-*.cjs
