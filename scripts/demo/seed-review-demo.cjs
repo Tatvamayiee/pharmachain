@@ -225,14 +225,19 @@ async function main() {
   ];
   for (let i = 0; i < SHIPMENTS.length; i++) {
     const s = SHIPMENTS[i];
-    if (await col('shipments').findOne({ code: s.code })) continue;
+    // The transport role's visibility check compares transporterId to the
+    // USER ID (demo-transport), not the organization name.
+    if (await col('shipments').findOne({ code: s.code })) {
+      await col('shipments').updateOne({ code: s.code }, { $set: { transporterId: 'demo-transport' } });
+      continue;
+    }
     const b = newBatches[s.batch];
     const batchDoc = await col('batches').findOne({ batchNumber: b.batchNumber }, { projection: { id: 1 } });
     const checkpoints = s.stops.map(([at], k) => ({ at: iso(daysAgo(s.days - k, 8 + k * 3)), by: 'demo-transport', note: at }));
     const qrId = crypto.randomBytes(16).toString('hex');
     await col('shipments').insertOne({
       id: `SHIPD-DEMO-${String(i + 1).padStart(2, '0')}`, code: s.code, batchId: batchDoc ? batchDoc.id : '',
-      senderId: MFR, receiverId: s.to, transporterId: TRANSPORTER, destination: s.dest,
+      senderId: MFR, receiverId: s.to, transporterId: 'demo-transport', destination: s.dest,
       route: ['Chennai', s.dest.split(',')[0]], quantity: 500, drugName: b.medicineName, batch: b.batchNumber,
       manufacturer: MFR, status: s.status, trackingNumber: `TRK-DEMO-${String(i + 1).padStart(2, '0')}`,
       checkpoints, transportQrId: qrId, currentLocation: s.stops[s.stops.length - 1][0].split(' — ')[0],
