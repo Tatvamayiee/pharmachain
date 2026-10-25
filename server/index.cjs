@@ -61,8 +61,11 @@ const platformRoutes = require('./routes/platform.cjs');
 const stockUploadRoutes = require('./routes/stockUpload.cjs');
 const transportRoutes = require('./routes/transport.cjs').router;
 const procurementRoutes = require('./routes/procurement.cjs');
+// Pharmacy POS billing: bill read/create endpoints under /api/platform/bills.
+const billingRoutes = require('./routes/billing.cjs');
 
 app.use('/api/platform', platformRoutes);
+app.use('/api/platform', billingRoutes);
 app.use('/api/procurement', procurementRoutes);
 app.use('/api/transport', transportRoutes);
 // stockUpload defines /stock/upload, /stock-availability and /purchase, so it

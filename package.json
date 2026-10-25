@@ -24,7 +24,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
-    "seed": "node server/seed/seed-db.cjs"
+    "seed": "node server/seed/seed-db.cjs",
+    "demo:seed": "node scripts/demo/seed-review-demo.cjs"
   },
   "main": "electron/main.cjs",
   "build": {
